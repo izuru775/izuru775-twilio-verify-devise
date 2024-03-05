@@ -28,7 +28,7 @@ class Devise::DeviseTwilioVerifyController < DeviseController
     end
 
     begin
-      verification_check = TwilioVerifyService.verify_sms_token(@resource.mobile_phone, params[:token])
+      verification_check = TwilioVerifyService.verify_sms_token(@resource.mobile_phone, params[:token],@resource.country_code)
       verification_check = verification_check.status == 'approved'
     rescue Twilio::REST::RestError
       verification_check = false
@@ -55,12 +55,19 @@ class Devise::DeviseTwilioVerifyController < DeviseController
     render :enable_twilio_verify  
   end
 
-  # enable 2fa
   def POST_enable_twilio_verify
-    if resource.update(twilio_verify_enabled: true)
+    if is_phone_number?(params[:cellphone])
+      resource.mobile_phone = params[:cellphone] # Update mobile_phone with the value from the text field
+      resource.country_code = params[:country_code] # Update country_code with the value from the text field
+      resource.update(twilio_verify_enabled: true)
+    else
+      flash[:alert] = "Invalid phone number. Please enter a valid phone number."
+      redirect_to after_twilio_verify_enabled_path_for(resource) and return
+    end
+    if resource.twilio_verify_enabled && resource.mobile_phone.present? 
       redirect_to [resource_name, :verify_twilio_verify_installation] and return
     else
-      set_flash_message(:error, :not_enabled)
+      flash[:alert] = "There was an error enabling Twilio Verify. Please try again."
       redirect_to after_twilio_verify_enabled_path_for(resource) and return
     end
   end
@@ -84,8 +91,8 @@ class Devise::DeviseTwilioVerifyController < DeviseController
     if @resource.mobile_phone.blank? || params[:token].blank?
       return handle_invalid_token :verify_twilio_verify_installation, :not_enabled
     end
-
-    verification_check = TwilioVerifyService.verify_sms_token(@resource.mobile_phone, params[:token])
+    token = params[:token]
+    verification_check = TwilioVerifyService.verify_sms_token(@resource.mobile_phone, params[:token],@resource.country_code)
 
     self.resource.twilio_verify_enabled = verification_check.status == 'approved'
 
@@ -109,13 +116,17 @@ class Devise::DeviseTwilioVerifyController < DeviseController
       return
     end
 
-    verification = TwilioVerifyService.send_sms_token(@resource.mobile_phone)
+    verification = TwilioVerifyService.send_sms_token(@resource.mobile_phone,@resource.country_code)
     success = verification.status == 'pending'
 
     render json: {
       sent: success,
       message: success ? 'Token was sent.' : 'Token was not sent, please try again.'
     }
+  end
+
+  def is_phone_number?(phone_number)
+    phone_number.match(/\A\+?[0-9]{10,15}\z/)
   end
 
   private
@@ -144,7 +155,26 @@ class Devise::DeviseTwilioVerifyController < DeviseController
 
   def check_resource_not_twilio_verify_enabled
     if resource.twilio_verify_enabled
+       if @resource.mobile_phone.blank? || params[:token].blank?
+      return handle_invalid_token :verify_twilio_verify_installation, :not_enabled
+    end
+
+    verification_check = TwilioVerifyService.verify_sms_token(@resource.mobile_phone ,params[:token],@resource.country_code)
+
+    self.resource.twilio_verify_enabled = verification_check.status == 'approved'
+
+    if verification_check.status == 'approved' && self.resource.save
+      remember_device(@resource.id) if params[:remember_device].to_i == 1
+      record_twilio_verify_authentication
+      set_flash_message(:notice, :enabled)
       redirect_to after_twilio_verify_verified_path_for(resource)
+    else
+      if resource_class.twilio_verify_enable_qr_code
+        #response = Authy::API.request_qr_code(id: resource.authy_id)
+        #@twilio_verify_qr_code = response.qr_code
+      end
+      handle_invalid_token :verify_twilio_verify_installation, :not_enabled
+    end
     end
   end
 
