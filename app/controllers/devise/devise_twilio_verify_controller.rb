@@ -59,12 +59,12 @@ class Devise::DeviseTwilioVerifyController < DeviseController
     if is_phone_number?(params[:cellphone])
       resource.mobile_phone = params[:cellphone] # Update mobile_phone with the value from the text field
       resource.country_code = params[:country_code] # Update country_code with the value from the text field
-      resource.update(twilio_verify_enabled: true)
+      resource.save()
     else
       flash[:alert] = "Invalid phone number. Please enter a valid phone number."
       redirect_to after_twilio_verify_enabled_path_for(resource) and return
     end
-    if resource.twilio_verify_enabled && resource.mobile_phone.present? 
+    if resource.mobile_phone.present? 
       redirect_to [resource_name, :verify_twilio_verify_installation] and return
     else
       flash[:alert] = "There was an error enabling Twilio Verify. Please try again."
@@ -99,6 +99,7 @@ class Devise::DeviseTwilioVerifyController < DeviseController
     if verification_check.status == 'approved' && self.resource.save
       remember_device(@resource.id) if params[:remember_device].to_i == 1
       record_twilio_verify_authentication
+      resource.update(twilio_verify_enabled: true)
       set_flash_message(:notice, :enabled)
       redirect_to after_twilio_verify_verified_path_for(resource)
     else
